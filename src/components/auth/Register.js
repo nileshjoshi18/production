@@ -78,7 +78,7 @@ export default function Register() {
         return setError('Please fill in all required fields');
       }
     } else {
-      if (!organizationName || !registrationNumber || !contactPerson) {
+      if (!organizationName || !registrationNumber || !contactPerson || !address) {
         return setError('Please fill in all required fields');
       }
     }
@@ -102,6 +102,7 @@ export default function Register() {
             organizationName,
             registrationNumber,
             contactPerson,
+            address,
             userType: 'ngo',
             createdAt: new Date().toISOString()
           };
@@ -264,6 +265,15 @@ export default function Register() {
                   label="Contact Person"
                   value={contactPerson}
                   onChange={(e) => setContactPerson(e.target.value)}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  required
+                  fullWidth
+                  label="Address"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
                 />
               </Grid>
               <Grid item xs={12}>
