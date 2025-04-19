@@ -9,7 +9,6 @@ import HotelDashboard from './components/hotel/HotelDashboard';
 import NGODashboard from './components/ngo/NGODashboard';
 import RequestDonation from './components/ngo/RequestDonation';
 import ProtectedRoute from './components/ProtectedRoute';
-import DonationMap from './components/ngo/DonationMap';
 
 // Create a theme instance
 const theme = createTheme({
@@ -56,11 +55,6 @@ function App() {
                 </ProtectedRoute>
               }
             />
-            <Route path="/ngo/map" element={
-              <ProtectedRoute userType="ngo">
-                <DonationMap />
-              </ProtectedRoute>
-            } />
             <Route path="/" element={<Navigate to="/login" replace />} />
           </Routes>
         </AuthProvider>

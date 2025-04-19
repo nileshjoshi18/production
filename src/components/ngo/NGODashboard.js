@@ -1,258 +1,244 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
+import { db } from '../../firebase/config';
+import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import {
   Container,
-  Paper,
   Typography,
   Grid,
   Card,
   CardContent,
   CardActions,
   Button,
-  Alert,
   Box,
   CircularProgress,
+  Alert,
+  Chip,
   TextField,
-  InputAdornment,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Stack,
 } from '@mui/material';
-import { Search as SearchIcon, LocationOn as LocationIcon, Map as MapIcon } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
-import { db } from '../../firebase/config';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
-import MapComponent from '../common/MapComponent';
+import { LocationOn, AccessTime, Restaurant, Map as MapIcon } from '@mui/icons-material';
 
-export default function NGODashboard() {
-  const { userData, currentUser } = useAuth();
-  const [loading, setLoading] = useState(false);
+const NGODashboard = () => {
+  const { currentUser, userData } = useAuth();
+  const navigate = useNavigate();
+  const [donations, setDonations] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [donations, setDonations] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const navigate = useNavigate();
   const [selectedDonation, setSelectedDonation] = useState(null);
-  const [showMap, setShowMap] = useState(false);
+  const [requestDialogOpen, setRequestDialogOpen] = useState(false);
+  const [requestQuantity, setRequestQuantity] = useState('');
+  const [requestNotes, setRequestNotes] = useState('');
 
-  const fetchDonations = useCallback(async (lat, lng) => {
-    setLoading(true);
+  useEffect(() => {
+    fetchDonations();
+  }, []);
+
+  const fetchDonations = async () => {
     try {
-      let q = query(
-        collection(db, 'donations'),
-        where('status', '==', 'available')
-      );
-      
+      const donationsRef = collection(db, 'donations');
+      const q = query(donationsRef, where('status', '==', 'available'));
       const querySnapshot = await getDocs(q);
-      let donationsList = querySnapshot.docs.map(doc => ({
+      const donationsData = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-
-      // If we have location, sort by distance
-      if (lat && lng) {
-        donationsList = donationsList.map(donation => {
-          return {
-            ...donation,
-            distance: calculateDistance(lat, lng, donation.latitude, donation.longitude)
-          };
-        }).sort((a, b) => a.distance - b.distance);
-      }
-
-      setDonations(donationsList);
+      setDonations(donationsData);
     } catch (error) {
-      console.error('Error fetching donations:', error);
-      setError('Failed to fetch donations');
+      setError('Error fetching donations: ' + error.message);
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    // Get user's location
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          fetchDonations(position.coords.latitude, position.coords.longitude);
-        },
-        (error) => {
-          console.error('Error getting location:', error);
-          fetchDonations(); // Fetch without location
-        }
-      );
-    } else {
-      fetchDonations(); // Fetch without location
-    }
-  }, [fetchDonations]);
-
-  const calculateDistance = (lat1, lon1, lat2, lon2) => {
-    // Haversine formula to calculate distance between two points
-    const R = 6371; // Earth's radius in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
   };
 
-  const handleRequestDonation = (donationId) => {
-    navigate(`/ngo/request/${donationId}`);
-  };
-
-  const handleDonationClick = (donation) => {
+  const handleRequestDonation = (donation) => {
     setSelectedDonation(donation);
-    setShowMap(true);
+    setRequestQuantity('');
+    setRequestNotes('');
+    setRequestDialogOpen(true);
   };
 
-  const filteredDonations = donations.filter(donation =>
-    donation.foodItem.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    donation.hotelName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleRequestSubmit = async () => {
+    if (!selectedDonation) return;
+
+    const quantity = parseInt(requestQuantity);
+    if (isNaN(quantity) || quantity <= 0) {
+      setError('Please enter a valid quantity');
+      return;
+    }
+
+    if (quantity > selectedDonation.quantity) {
+      setError('Requested quantity cannot exceed available quantity');
+      return;
+    }
+
+    try {
+      const donationRef = doc(db, 'donations', selectedDonation.id);
+      const updateData = {
+        status: quantity === selectedDonation.quantity ? 'requested' : 'partially_requested',
+        requestedBy: currentUser.uid,
+        requestedAt: new Date().toISOString(),
+        requestedQuantity: quantity,
+        requestNotes: requestNotes,
+        remainingQuantity: selectedDonation.quantity - quantity
+      };
+
+      await updateDoc(donationRef, updateData);
+      setSuccess('Donation request submitted successfully');
+      setRequestDialogOpen(false);
+      fetchDonations();
+    } catch (error) {
+      setError('Error requesting donation: ' + error.message);
+    }
+  };
+
+  // Function to open Google Maps
+  const openGoogleMaps = (donation) => {
+    if (!userData?.address) {
+      setError('NGO address not found. Please update your profile with your address.');
+      return;
+    }
+
+    const ngoAddress = encodeURIComponent(userData.address);
+    let hotelLocation;
+
+    if (donation.location && donation.location.latitude && donation.location.longitude) {
+      // If we have coordinates, use them for precise location
+      hotelLocation = `${donation.location.latitude},${donation.location.longitude}`;
+    } else if (donation.hotelAddress) {
+      // If we only have address, use that
+      hotelLocation = encodeURIComponent(donation.hotelAddress);
+    } else {
+      setError('Hotel location not found');
+      return;
+    }
+
+    // Open Google Maps with directions from NGO to hotel
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${ngoAddress}&destination=${hotelLocation}&travelmode=driving`;
+    window.open(url, '_blank');
+  };
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      <Typography variant="h4" component="h1" gutterBottom>
+        Available Donations
+      </Typography>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+
+      {success && (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          {success}
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h5">
-              NGO Dashboard
-            </Typography>
-            <Button 
-              variant="contained" 
-              color="primary" 
-              startIcon={<MapIcon />}
-              onClick={() => navigate('/ngo/map')}
-            >
-              View Donations Map
-            </Button>
-          </Paper>
-        </Grid>
-        
-        <Grid item xs={12} sm={6} md={4}>
-          <Paper sx={{ p: 3, mb: 3 }}>
-            <Typography variant="h5" gutterBottom>
-              Available Food Donations
-            </Typography>
-            <TextField
-              fullWidth
-              variant="outlined"
-              placeholder="Search by food item or hotel name"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              sx={{ mb: 2 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon />
-                  </InputAdornment>
-                ),
-              }}
-            />
-            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-            {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
-          </Paper>
-        </Grid>
-
-        {loading ? (
-          <Grid item xs={12}>
-            <Box display="flex" justifyContent="center" my={4}>
-              <CircularProgress />
-            </Box>
-          </Grid>
-        ) : (
-          <Grid item xs={12}>
-            <Grid container spacing={3}>
-              {filteredDonations.map((donation) => (
-                <Grid item xs={12} sm={6} md={4} key={donation.id}>
-                  <Card 
-                    sx={{ 
-                      height: '100%',
-                      cursor: 'pointer',
-                      '&:hover': {
-                        boxShadow: 6
-                      }
-                    }}
-                    onClick={() => handleDonationClick(donation)}
+        {donations.map((donation) => (
+          <Grid item xs={12} sm={6} md={4} key={donation.id}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  {donation.foodItem}
+                </Typography>
+                <Box display="flex" alignItems="center" mb={1}>
+                  <Restaurant sx={{ mr: 1 }} />
+                  <Typography variant="body2">
+                    Quantity: {donation.quantity} {donation.unit}
+                  </Typography>
+                </Box>
+                <Box display="flex" alignItems="center" mb={1}>
+                  <LocationOn sx={{ mr: 1 }} />
+                  <Typography variant="body2">
+                    {donation.hotelAddress}
+                  </Typography>
+                </Box>
+                <Box display="flex" alignItems="center">
+                  <AccessTime sx={{ mr: 1 }} />
+                  <Typography variant="body2">
+                    Expires: {new Date(donation.expiryTime).toLocaleDateString()}
+                  </Typography>
+                </Box>
+                {donation.notes && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    {donation.notes}
+                  </Typography>
+                )}
+              </CardContent>
+              <CardActions>
+                <Stack direction="row" spacing={1} sx={{ width: '100%' }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<MapIcon />}
+                    onClick={() => openGoogleMaps(donation)}
+                    sx={{ flex: 1 }}
                   >
-                    <CardContent>
-                      <Typography variant="h6" gutterBottom>
-                        {donation.foodItem}
-                      </Typography>
-                      <Typography color="textSecondary" gutterBottom>
-                        Quantity: {donation.quantity} portions
-                      </Typography>
-                      <Typography variant="body2">
-                        From: {donation.hotelName}
-                      </Typography>
-                      <Typography variant="body2">
-                        Address: {donation.hotelAddress}
-                      </Typography>
-                      <Typography variant="body2">
-                        Production: {new Date(donation.productionTime).toLocaleString()}
-                      </Typography>
-                      <Typography variant="body2">
-                        Expires: {new Date(donation.expiryTime).toLocaleString()}
-                      </Typography>
-                      {donation.notes && (
-                        <Typography variant="body2" color="textSecondary">
-                          Notes: {donation.notes}
-                        </Typography>
-                      )}
-                    </CardContent>
-                    <CardActions>
-                      <Button 
-                        size="small" 
-                        color="primary"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRequestDonation(donation.id);
-                        }}
-                      >
-                        Request Donation
-                      </Button>
-                    </CardActions>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
+                    See in GMaps
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={() => handleRequestDonation(donation)}
+                    sx={{ flex: 1 }}
+                  >
+                    Request Donation
+                  </Button>
+                </Stack>
+              </CardActions>
+            </Card>
           </Grid>
-        )}
-
-        {showMap && selectedDonation && (
-          <Grid item xs={12}>
-            <Paper sx={{ p: 3 }}>
-              <Typography variant="h6" gutterBottom>
-                Location Map
-              </Typography>
-              <Box sx={{ height: 400, width: '100%' }}>
-                <MapComponent
-                  markers={[{
-                    id: selectedDonation.id,
-                    position: {
-                      lat: selectedDonation.location.latitude,
-                      lng: selectedDonation.location.longitude
-                    },
-                    title: selectedDonation.hotelName,
-                    description: `${selectedDonation.foodItem} - ${selectedDonation.quantity} portions`
-                  }]}
-                  center={{
-                    lat: selectedDonation.location.latitude,
-                    lng: selectedDonation.location.longitude
-                  }}
-                  zoom={13}
-                />
-              </Box>
-              <Button
-                variant="outlined"
-                onClick={() => setShowMap(false)}
-                sx={{ mt: 2 }}
-              >
-                Close Map
-              </Button>
-            </Paper>
-          </Grid>
-        )}
+        ))}
       </Grid>
+
+      <Dialog open={requestDialogOpen} onClose={() => setRequestDialogOpen(false)}>
+        <DialogTitle>Request Donation</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Quantity"
+            type="number"
+            fullWidth
+            value={requestQuantity}
+            onChange={(e) => setRequestQuantity(e.target.value)}
+            helperText={`Available: ${selectedDonation?.quantity} ${selectedDonation?.unit}`}
+          />
+          <TextField
+            margin="dense"
+            label="Notes"
+            multiline
+            rows={4}
+            fullWidth
+            value={requestNotes}
+            onChange={(e) => setRequestNotes(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRequestDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleRequestSubmit} variant="contained" color="primary">
+            Submit Request
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
-} 
+};
+
+export default NGODashboard; 

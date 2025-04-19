@@ -9,11 +9,23 @@ import {
   Alert,
   Box,
   CircularProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../firebase/config';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
-import MapComponent from '../common/MapComponent';
+
+// Define food types and their corresponding units
+const FOOD_TYPES = {
+  'Rice': ['kg', 'g'],
+  'Dal': ['kg', 'g'],
+  'Roti': ['pieces', 'dozen'],
+  'Sabzi': ['kg', 'g', 'portions'],
+  'Other': ['kg', 'g', 'portions', 'pieces']
+};
 
 export default function HotelDashboard() {
   const { currentUser, userData } = useAuth();
@@ -26,6 +38,7 @@ export default function HotelDashboard() {
   // Form state
   const [foodItem, setFoodItem] = useState('');
   const [quantity, setQuantity] = useState('');
+  const [unit, setUnit] = useState('');
   const [productionTime, setProductionTime] = useState('');
   const [expiryTime, setExpiryTime] = useState('');
   const [notes, setNotes] = useState('');
@@ -33,6 +46,16 @@ export default function HotelDashboard() {
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [locationError, setLocationError] = useState('');
+
+  // Update available units when food item changes
+  useEffect(() => {
+    if (foodItem) {
+      const foodType = Object.keys(FOOD_TYPES).find(type => 
+        foodItem.toLowerCase().includes(type.toLowerCase())
+      ) || 'Other';
+      setUnit(FOOD_TYPES[foodType][0]); // Set default unit
+    }
+  }, [foodItem]);
 
   const fetchDonations = useCallback(async () => {
     if (!currentUser) return;
@@ -78,7 +101,8 @@ export default function HotelDashboard() {
 
       const donationData = {
         foodItem,
-        quantity: parseInt(quantity),
+        quantity: parseFloat(quantity),
+        unit,
         productionTime: new Date(productionTime).toISOString(),
         expiryTime: new Date(expiryTime).toISOString(),
         notes,
@@ -98,6 +122,7 @@ export default function HotelDashboard() {
       // Reset form
       setFoodItem('');
       setQuantity('');
+      setUnit('');
       setProductionTime('');
       setExpiryTime('');
       setNotes('');
@@ -146,16 +171,37 @@ export default function HotelDashboard() {
                 value={foodItem}
                 onChange={(e) => setFoodItem(e.target.value)}
                 margin="normal"
+                helperText="Enter the food item (e.g., Rice, Dal, Roti, Sabzi)"
               />
-              <TextField
-                required
-                fullWidth
-                label="Quantity (portions)"
-                type="number"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-                margin="normal"
-              />
+              <Grid container spacing={2}>
+                <Grid item xs={8}>
+                  <TextField
+                    required
+                    fullWidth
+                    label="Quantity"
+                    type="number"
+                    value={quantity}
+                    onChange={(e) => setQuantity(e.target.value)}
+                    margin="normal"
+                  />
+                </Grid>
+                <Grid item xs={4}>
+                  <FormControl fullWidth margin="normal">
+                    <InputLabel>Unit</InputLabel>
+                    <Select
+                      value={unit}
+                      label="Unit"
+                      onChange={(e) => setUnit(e.target.value)}
+                    >
+                      {foodItem && FOOD_TYPES[Object.keys(FOOD_TYPES).find(type => 
+                        foodItem.toLowerCase().includes(type.toLowerCase())
+                      ) || 'Other'].map((u) => (
+                        <MenuItem key={u} value={u}>{u}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+              </Grid>
               <TextField
                 required
                 fullWidth
@@ -253,7 +299,7 @@ export default function HotelDashboard() {
                 >
                   <Typography variant="h6">{donation.foodItem}</Typography>
                   <Typography color="textSecondary">
-                    Quantity: {donation.quantity} portions
+                    Quantity: {donation.quantity} {donation.unit}
                   </Typography>
                   <Typography color="textSecondary">
                     Status: {donation.status}
@@ -272,7 +318,7 @@ export default function HotelDashboard() {
                         Requested by: {donation.requestedByOrg}
                       </Typography>
                       <Typography variant="body2">
-                        Requested quantity: {donation.requestedQuantity} portions
+                        Requested quantity: {donation.requestedQuantity} {donation.unit}
                       </Typography>
                       <Typography variant="body2">
                         Requested at: {new Date(donation.requestedAt).toLocaleString()}
@@ -287,19 +333,6 @@ export default function HotelDashboard() {
                 </Paper>
               ))
             )}
-          </Paper>
-        </Grid>
-
-        {/* Add Map Component */}
-        <Grid item xs={12}>
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="h5" gutterBottom>
-              Your Location
-            </Typography>
-            <MapComponent 
-              location={userData?.location} 
-              height="400px"
-            />
           </Paper>
         </Grid>
       </Grid>
